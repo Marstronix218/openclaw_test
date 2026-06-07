@@ -1,5 +1,9 @@
 # OpenClaw in Docker (Hugging Face + Weave tracing)
 
+For the separate Brev `hyperstack_A100_80G` comparison using a locally
+downloaded `Qwen/Qwen2.5-7B-Instruct` model, see [BREV.md](BREV.md). That path
+uses vLLM on the Brev GPU and does not use Hugging Face Inference Providers.
+
 Runs the [OpenClaw](https://openclaw.ai) gateway in Docker with a local
 OpenAI-compatible proxy backed by
 [`huggingface_hub.InferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client).

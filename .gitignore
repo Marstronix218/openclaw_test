@@ -1,5 +1,8 @@
 .env
+.env.brev
 .bin/
+.brev-data/
+artifacts/
 *.log
 __pycache__/
 *.py[cod]
