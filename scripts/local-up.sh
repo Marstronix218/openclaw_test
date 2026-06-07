@@ -94,6 +94,10 @@ openclaw onboard --non-interactive --accept-risk --mode local --flow manual \
   --skip-daemon --skip-channels --skip-skills --skip-search --skip-hooks --skip-ui --skip-health
 openclaw models set \"custom-127-0-0-1-8000/${MODEL_ID}\" || true
 openclaw config set agents.defaults.timeoutSeconds 1200 || true
+openclaw config set tools.allow '[\"read\",\"write\",\"edit\",\"web_search\",\"web_fetch\",\"bash\"]' --strict-json || true
+openclaw config set tools.deny '[]' --strict-json || true
+openclaw config set skills.allowBundled '[\"weather\"]' --strict-json || true
+openclaw config set web.search_backend duckduckgo || true
 openclaw config set gateway.controlUi.allowedOrigins '[\"http://localhost:${HOST_PORT}\",\"http://127.0.0.1:${HOST_PORT}\"]' --strict-json || true
 pkill -f 'openclaw gateway' 2>/dev/null || true
 sleep 2
