@@ -62,8 +62,6 @@ dexec "
 set -e
 export HOME=/root; unset OPENCLAW_HOME
 python3 -c 'import huggingface_hub, weave' || { echo 'image missing huggingface_hub/weave' >&2; exit 1; }
-pkill -f '[m]odel-server/server.py' 2>/dev/null || true
-sleep 1
 cd /root/model-server
 PYTHONUNBUFFERED=1 \
   HF_TOKEN='${HF_TOKEN}' HUGGINGFACE_HUB_TOKEN='${HF_TOKEN}' \
@@ -94,8 +92,6 @@ openclaw onboard --non-interactive --accept-risk --mode local --flow manual \
   --skip-daemon --skip-channels --skip-skills --skip-search --skip-hooks --skip-ui --skip-health
 openclaw models set \"custom-127-0-0-1-8000/${MODEL_ID}\" || true
 openclaw config set agents.defaults.timeoutSeconds 1200 || true
-pkill -f '[o]penclaw gateway' 2>/dev/null || true
-sleep 2
 setsid bash -c 'openclaw gateway --bind lan --port 18789 --force >> /root/.openclaw/gateway.log 2>&1' < /dev/null &
 sleep 5
 "
