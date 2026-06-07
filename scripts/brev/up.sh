@@ -16,7 +16,7 @@ if [[ "$gpu_name" != *"A100"* ]]; then
   echo "warning: expected an NVIDIA A100 80GB; found '$gpu_name'" >&2
 fi
 
-mkdir -p "$BREV_HF_CACHE" "$BREV_OPENCLAW_STATE/workspace" "$BREV_RUNS_DIR"
+mkdir -p "$BREV_HF_CACHE" "$BREV_OPENCLAW_STATE/workspace"
 
 echo "==> Building isolated OpenClaw image ($BREV_OPENCLAW_VERSION)"
 docker build \
@@ -48,9 +48,7 @@ docker run -d \
   --dtype "$VLLM_DTYPE" \
   --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
   --max-model-len "$VLLM_MAX_MODEL_LEN" \
-  --max-num-seqs "$VLLM_MAX_NUM_SEQS" \
-  --enable-auto-tool-choice \
-  --tool-call-parser hermes >/dev/null
+  --max-num-seqs "$VLLM_MAX_NUM_SEQS" >/dev/null
 
 echo "==> Waiting for model download and vLLM readiness"
 ready=0
@@ -84,7 +82,6 @@ openclaw_env=(
   -e "WEAVE_PROJECT=$WEAVE_PROJECT"
 )
 [[ -n "${WANDB_API_KEY:-}" ]] && openclaw_env+=(-e "WANDB_API_KEY=$WANDB_API_KEY")
-[[ -n "${BRAVE_API_KEY:-}" ]] && openclaw_env+=(-e "BRAVE_API_KEY=$BRAVE_API_KEY")
 
 docker run -d \
   --name "$BREV_OPENCLAW_CONTAINER" \
@@ -126,27 +123,16 @@ fi
 provider_json="$(printf '{"baseUrl":"http://127.0.0.1:%s/v1","apiKey":"local","api":"openai-completions","timeoutSeconds":1200,"models":[{"id":"%s","name":"Qwen2.5 7B Instruct (Brev A100)","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":%s,"maxTokens":2048}]}' \
   "$WEAVE_PROXY_PORT" "$MODEL_ID" "$VLLM_MAX_MODEL_LEN")"
 
-echo "==> Configuring local-only model and six-tool comparison surface"
+echo "==> Configuring local-only model"
 openclaw_exec "openclaw config set models.mode replace"
 openclaw_exec "openclaw config set models.pricing.enabled false --strict-json"
 openclaw_exec "openclaw config set models.providers.brevvllm '$provider_json' --strict-json"
 openclaw_exec "openclaw config set agents.defaults.model.primary 'brevvllm/$MODEL_ID'"
 openclaw_exec "openclaw config set agents.defaults.timeoutSeconds 1200 --strict-json"
-openclaw_exec "openclaw config set tools.profile minimal"
-# Restrictive profiles are no longer widened by configuring tools.exec/tools.fs.
-# Grant the capabilities explicitly. An additional tools.allow would intersect
-# with this profile policy and can leave the embedded agent with no tools.
-openclaw_exec "openclaw config set tools.alsoAllow '[\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\",\"process\"]' --strict-json"
-openclaw_exec "openclaw config unset tools.allow"
-openclaw_exec "openclaw config set tools.deny '[\"process\",\"apply_patch\"]' --strict-json"
-openclaw_exec "openclaw config set skills.allowBundled '[\"weather\"]' --strict-json"
+openclaw_exec "openclaw config unset tools || true"
+openclaw_exec "openclaw config unset skills.allowBundled || true"
+openclaw_exec "rm -f /root/.openclaw/exec-approvals.json"
 openclaw_exec "openclaw config set gateway.controlUi.allowedOrigins '[\"http://localhost:${OPENCLAW_PORT}\",\"http://127.0.0.1:${OPENCLAW_PORT}\"]' --strict-json"
-
-# Start in the safer mode. Switch with approval-mode.sh for benchmark phases.
-openclaw_exec "openclaw config set tools.exec.mode ask"
-openclaw_exec "openclaw approvals set --stdin <<'EOF'
-{\"version\":1,\"defaults\":{\"security\":\"allowlist\",\"ask\":\"on-miss\",\"askFallback\":\"deny\",\"autoAllowSkills\":false},\"agents\":{\"main\":{\"security\":\"allowlist\",\"ask\":\"on-miss\",\"askFallback\":\"deny\",\"autoAllowSkills\":false,\"allowlist\":[]}}}
-EOF"
 
 restart_gateway
 
@@ -171,7 +157,6 @@ vllm_dtype=$VLLM_DTYPE
 vllm_gpu_memory_utilization=$VLLM_GPU_MEMORY_UTILIZATION
 vllm_max_model_len=$VLLM_MAX_MODEL_LEN
 openclaw_version=$actual_openclaw_version
-openclaw_tools=session_status,web_search,web_fetch,read,write,exec
 EOF
 
 echo

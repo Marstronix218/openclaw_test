@@ -29,8 +29,6 @@ echo "=== OpenClaw ==="
 if container_running "$BREV_OPENCLAW_CONTAINER"; then
   openclaw_exec "openclaw models status || true"
   echo
-  openclaw_exec "openclaw config get tools --json || true"
-  echo
   openclaw_exec "tail -n 20 /root/.openclaw/gateway.log 2>/dev/null || true"
 else
   echo "not running"

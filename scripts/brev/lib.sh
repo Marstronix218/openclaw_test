@@ -28,13 +28,10 @@ fi
 : "${VLLM_MAX_MODEL_LEN:=8192}"
 : "${VLLM_MAX_NUM_SEQS:=16}"
 : "${BREV_OPENCLAW_VERSION:=2026.6.1}"
-: "${BENCHMARK_USER:=alice}"
-: "${BENCHMARK_SESSION_KEY:=openclaw-qwen25-7b-alice}"
 
 BREV_DATA_DIR="$(cd "$(dirname "$BREV_DATA_DIR")" 2>/dev/null && pwd)/$(basename "$BREV_DATA_DIR")"
 BREV_HF_CACHE="$BREV_DATA_DIR/huggingface"
 BREV_OPENCLAW_STATE="$BREV_DATA_DIR/openclaw"
-BREV_RUNS_DIR="$BREV_DATA_DIR/runs"
 
 require() {
   local name="$1"
