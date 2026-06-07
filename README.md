@@ -36,6 +36,66 @@ bash scripts/up.sh
 4. Onboards OpenClaw and wires it to the proxy.
 5. Starts the OpenClaw gateway.
 
+## Run on NVIDIA Brev
+
+This configuration runs on Brev, but it does **not** use the Brev GPU.
+Model inference is sent to the configured Hugging Face Inference Provider.
+Use a CPU instance when available, or the least expensive GPU instance, unless
+you plan to replace the proxy with a local GPU model server.
+
+1. In the Brev console, create an instance in **VM Mode** and select the
+   least expensive suitable instance type. Docker is preinstalled in this
+   mode. Then connect from your local machine:
+
+   ```bash
+   brev login
+   brev refresh
+   brev shell openclaw-brev
+   ```
+
+2. In the Brev shell, keep the repository in the persistent workspace:
+
+   ```bash
+   cd /home/ubuntu/workspace
+   git clone https://github.com/Marstronix218/openclaw_test.git
+   cd openclaw_test
+   cp .env.brev.example .env
+   ```
+
+3. Edit `.env` and set at least:
+
+   ```dotenv
+   OPENCLAW_GATEWAY_TOKEN=<output of: openssl rand -hex 32>
+   HF_TOKEN=hf_...
+   ```
+
+   `WANDB_API_KEY` is optional. Then start and verify the service:
+
+   ```bash
+   bash scripts/up.sh
+   bash scripts/status.sh
+   bash scripts/verify-model.sh
+   ```
+
+4. On your local machine, keep this command running:
+
+   ```bash
+   brev port-forward openclaw-brev --port 18789:18789
+   ```
+
+   Open `http://localhost:18789` and authenticate with the
+   `OPENCLAW_GATEWAY_TOKEN` from the Brev instance's `.env`.
+
+Alternatively, add port `18789` under **Using Tunnels** in the Brev console for
+a browser-accessible URL. Brev tunnels require browser authentication; CLI
+port forwarding is simpler for local access.
+
+Stop the application before stopping the Brev instance:
+
+```bash
+bash scripts/down.sh
+```
+
 ## Tracing with Weave
 
 The proxy calls `weave.init()` before creating `InferenceClient`, so Weave
