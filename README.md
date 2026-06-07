@@ -79,7 +79,7 @@ Talk to the assistant from inside the container:
 
 ```bash
 bash scripts/ssh.sh
-openclaw agent --message "What can you do?" --thinking high
+openclaw agent --agent main --message "What can you do?" --thinking high
 ```
 
 Gateway UI: `http://localhost:18789` (gated by `OPENCLAW_GATEWAY_TOKEN`).

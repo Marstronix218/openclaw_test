@@ -92,8 +92,7 @@ openclaw onboard --non-interactive --accept-risk --mode local --flow manual \
   --gateway-auth token --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
   --gateway-bind lan --gateway-port 18789 \
   --skip-daemon --skip-channels --skip-skills --skip-search --skip-hooks --skip-ui --skip-health
-qwen_id=\$(openclaw models list 2>/dev/null | grep -i qwen | awk '{print \$1}' | head -1)
-[ -n \"\$qwen_id\" ] && openclaw models set \"\$qwen_id\" || true
+openclaw models set \"custom-127-0-0-1-8000/${MODEL_ID}\" || true
 openclaw config set agents.defaults.timeoutSeconds 1200 || true
 pkill -f 'openclaw gateway' 2>/dev/null || true
 sleep 2
