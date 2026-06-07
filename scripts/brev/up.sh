@@ -133,7 +133,10 @@ openclaw_exec "openclaw config set models.providers.brevvllm '$provider_json' --
 openclaw_exec "openclaw config set agents.defaults.model.primary 'brevvllm/$MODEL_ID'"
 openclaw_exec "openclaw config set agents.defaults.timeoutSeconds 1200 --strict-json"
 openclaw_exec "openclaw config set tools.profile minimal"
-openclaw_exec "openclaw config set tools.allow '[\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\"]' --strict-json"
+# Restrictive profiles are no longer widened by configuring tools.exec/tools.fs.
+# Grant the capabilities explicitly, then keep the benchmark surface at six tools.
+openclaw_exec "openclaw config set tools.alsoAllow '[\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\",\"process\"]' --strict-json"
+openclaw_exec "openclaw config set tools.allow '[\"session_status\",\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\"]' --strict-json"
 openclaw_exec "openclaw config set tools.deny '[]' --strict-json"
 openclaw_exec "openclaw config set skills.allowBundled '[\"weather\"]' --strict-json"
 openclaw_exec "openclaw config set gateway.controlUi.allowedOrigins '[\"http://localhost:${OPENCLAW_PORT}\",\"http://127.0.0.1:${OPENCLAW_PORT}\"]' --strict-json"

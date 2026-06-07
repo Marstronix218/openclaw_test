@@ -10,6 +10,7 @@ This path is for the separate comparison box:
 | Model | `Qwen/Qwen2.5-7B-Instruct` |
 | Serving | Local vLLM, no Hugging Face Inference Provider |
 | Tracing | W&B Weave through a local OpenAI-compatible proxy |
+| OpenClaw | `2026.6.1` by default, configurable with `BREV_OPENCLAW_VERSION` |
 
 The vLLM container downloads the model into `.brev-data/huggingface` on the
 Brev host. Recreating the containers reuses those local weights.
@@ -68,6 +69,11 @@ The configured tool surface has six tools:
 ```text
 session_status, web_search, web_fetch, read, write, exec
 ```
+
+The setup uses `tools.profile=minimal`, widens it with `tools.alsoAllow`, then
+uses `tools.allow` to keep the final callable set to those six tools. This is
+required by current OpenClaw releases; configuring `tools.exec` alone no
+longer widens a restrictive profile.
 
 `BRAVE_API_KEY` is optional but required for OpenClaw `web_search`.
 The bundled `weather` skill is the only bundled skill enabled.

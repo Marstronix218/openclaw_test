@@ -27,7 +27,7 @@ fi
 : "${VLLM_GPU_MEMORY_UTILIZATION:=0.85}"
 : "${VLLM_MAX_MODEL_LEN:=8192}"
 : "${VLLM_MAX_NUM_SEQS:=16}"
-: "${BREV_OPENCLAW_VERSION:=latest}"
+: "${BREV_OPENCLAW_VERSION:=2026.6.1}"
 : "${BENCHMARK_USER:=alice}"
 : "${BENCHMARK_SESSION_KEY:=openclaw-qwen25-7b-alice}"
 
@@ -63,11 +63,27 @@ openclaw_exec() {
 
 restart_gateway() {
   docker exec "$BREV_OPENCLAW_CONTAINER" bash -lc \
-    "pkill -f 'openclaw gateway' 2>/dev/null || true"
+    "pkill -f '[o]penclaw gateway' 2>/dev/null || true"
   sleep 2
+  openclaw_exec ": > /root/.openclaw/gateway.log"
   docker exec -d "$BREV_OPENCLAW_CONTAINER" bash -lc \
-    "export HOME=/root; unset OPENCLAW_HOME; exec openclaw gateway --bind lan --port 18789 >> /root/.openclaw/gateway.log 2>&1"
-  sleep 5
+    "export HOME=/root; unset OPENCLAW_HOME; exec openclaw gateway --bind lan --port 18789 --force >> /root/.openclaw/gateway.log 2>&1"
+
+  local ready=0
+  for _ in $(seq 1 30); do
+    if docker exec "$BREV_OPENCLAW_CONTAINER" \
+      curl -fsS --max-time 2 http://127.0.0.1:18789/readyz >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ "$ready" -ne 1 ]]; then
+    echo "error: OpenClaw gateway did not become ready" >&2
+    openclaw_exec "tail -n 100 /root/.openclaw/gateway.log" >&2 || true
+    return 1
+  fi
 }
 
 timestamp_utc() {
