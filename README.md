@@ -1,15 +1,20 @@
-# OpenClaw in Docker (local)
+# OpenClaw in Docker (Hugging Face + Weave tracing)
 
-Runs the [OpenClaw](https://openclaw.ai) gateway and a local
-[Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) model
-server **entirely inside a Docker container** on your machine. Nothing runs on
-Daytona — the container has normal outbound internet, so **Weave (W&B) tracing
-works out of the box**.
+Runs the [OpenClaw](https://openclaw.ai) gateway in Docker with a local
+OpenAI-compatible proxy backed by
+[`huggingface_hub.InferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client).
+Inference runs on your chosen
+[Inference Provider](https://huggingface.co/docs/inference-providers) (default:
+`featherless-ai`).
+
+Every `InferenceClient.chat_completion` call is automatically traced in
+[Weave](https://wandb.ai/site/weave) when `WANDB_API_KEY` is set, following the
+[HF + Weave integration guide](https://docs.wandb.ai/weave/guides/integrations/huggingface).
 
 ## Prerequisites
 
 - Docker
-- An LLM is bundled (Qwen 1.5B on CPU); no cloud API key required for inference
+- `HF_TOKEN` with Inference Providers permission
 - Optional: `WANDB_API_KEY` for Weave tracing
 
 ## Setup
@@ -17,6 +22,7 @@ works out of the box**.
 ```bash
 cp .env.example .env
 # Fill in OPENCLAW_GATEWAY_TOKEN (openssl rand -hex 32)
+# Fill in HF_TOKEN from https://huggingface.co/settings/tokens
 # Optional: WANDB_API_KEY from https://wandb.ai/authorize
 
 bash scripts/up.sh
@@ -24,26 +30,24 @@ bash scripts/up.sh
 
 `up.sh` runs `local-up.sh`, which:
 
-1. Builds the image from `snapshot/Dockerfile` (Node 24, OpenClaw, CPU torch,
-   transformers, Qwen weights).
+1. Builds a lightweight image (Node 24 + OpenClaw + huggingface_hub + weave).
 2. Starts container `openclaw-local` with port `18789` mapped to localhost.
-3. Onboards + starts the OpenClaw gateway.
-4. Starts the Qwen OpenAI-compatible model server on `:8000` (Weave-traced when
-   `WANDB_API_KEY` is set).
-5. Wires OpenClaw to the local model and restarts the gateway.
+3. Starts the HF InferenceClient proxy on `:8000`.
+4. Onboards OpenClaw and wires it to the proxy.
+5. Starts the OpenClaw gateway.
 
-First build downloads torch + model weights and can take a while.
+## Tracing with Weave
 
-## Tracing with Weave (Weights & Biases)
-
-Every LLM call OpenClaw makes goes through `model-server/server.py`, where
-Weave tracing is wired in. With `WANDB_API_KEY` set in `.env`, each turn's
-prompt, completion, tool calls, and token usage show up in your Weave project.
+The proxy calls `weave.init()` before creating `InferenceClient`, so Weave
+autopatches and logs every inference call (inputs, outputs, chat view, metadata).
 
 ```bash
 # In .env:
 WANDB_API_KEY=...                  # from https://wandb.ai/authorize
 WEAVE_PROJECT=openclaw-sandbox     # or "entity/project"
+HF_TOKEN=hf_...                    # Inference Providers token
+HF_MODEL_PROVIDER=featherless-ai   # or auto, together, groq, etc.
+MODEL_ID=Qwen/Qwen2.5-1.5B-Instruct
 ```
 
 After `bash scripts/up.sh`, check the model server log for your Weave URL:
@@ -59,15 +63,8 @@ Run a test completion (shows up in Weave within a few seconds):
 bash scripts/verify-model.sh
 ```
 
-Tracing is opt-in: if `WANDB_API_KEY` is unset the server runs with zero
+Tracing is opt-in: if `WANDB_API_KEY` is unset the server runs without Weave
 overhead.
-
-> **Why not Daytona?** Shared Daytona regions block outbound traffic to
-> `api.wandb.ai` / `trace.wandb.ai`, so Weave cannot connect from inside a
-> sandbox. A local Docker container has unrestricted egress. Legacy Daytona
-> scripts (`20-sandbox.sh`, etc.) remain in `scripts/` if you need them for
-> other reasons, but `up.sh` / `down.sh` / `status.sh` / `ssh.sh` all target
-> Docker now.
 
 ## Day-to-day
 
@@ -87,9 +84,21 @@ openclaw agent --message "What can you do?" --thinking high
 
 Gateway UI: `http://localhost:18789` (gated by `OPENCLAW_GATEWAY_TOKEN`).
 
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENCLAW_GATEWAY_TOKEN` | — | Gateway auth token (required) |
+| `HF_TOKEN` | — | Hugging Face token with Inference Providers (required) |
+| `HF_MODEL_PROVIDER` | `featherless-ai` | Inference provider for `InferenceClient` |
+| `MODEL_ID` | `Qwen/Qwen2.5-1.5B-Instruct` | Model id on the Hub |
+| `WANDB_API_KEY` | — | Weights & Biases API key (enables Weave tracing) |
+| `WEAVE_PROJECT` | `openclaw-sandbox` | Weave project name |
+| `LOCAL_IMAGE` | `openclaw-local` | Docker image name |
+| `LOCAL_CONTAINER` | `openclaw-local` | Docker container name |
+
 ## Notes
 
-- The model runs on CPU inside the container. A full agent turn can take 1–2
-  minutes; timeouts are raised to 1200s to accommodate this.
-- CPU torch + model weights are baked into the image at build time.
+- No local GPU/CPU model load — inference runs on the HF provider you select.
 - Secrets live only in `.env` (gitignored) and as container env vars.
+- Legacy Daytona scripts remain in `scripts/` but are unused by `up.sh`.

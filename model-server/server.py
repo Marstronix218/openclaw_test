@@ -1,24 +1,20 @@
-"""Minimal OpenAI-compatible server for Qwen/Qwen2.5-1.5B-Instruct on CPU.
+"""OpenAI-compatible proxy for Hugging Face Inference Providers.
 
-Exposes /v1/models and /v1/chat/completions (streaming + non-streaming) backed
-by HuggingFace transformers. Tool calls are parsed from Qwen's Hermes-style
-<tool_call>{...}</tool_call> blocks into OpenAI `tool_calls`.
+Routes /v1/chat/completions to huggingface_hub.InferenceClient. When
+WANDB_API_KEY is set, weave.init() enables automatic tracing of every
+InferenceClient call (see https://docs.wandb.ai/weave/guides/integrations/huggingface).
 """
 import json
 import os
-import re
 import sys
 import time
 import traceback
 import uuid
-from threading import Thread
 from typing import Any, Optional
 
-import torch
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 
 def log(*a):
@@ -26,53 +22,43 @@ def log(*a):
 
 
 # --- Weave (Weights & Biases) tracing ------------------------------------
-# Every LLM call OpenClaw makes flows through this server, so this is the
-# natural place to capture prompts/completions/tool-calls/usage. Enabled when
-# a WANDB_API_KEY is present; otherwise this is a no-op so the server still
-# runs on snapshots that don't have weave installed.
+# weave.init() must run before InferenceClient is used so Weave can autopatch
+# chat_completion calls. See the HF integration guide.
 WEAVE_ENABLED = False
+weave = None  # type: ignore
+
 if os.environ.get("WANDB_API_KEY"):
     try:
-        import weave  # type: ignore
+        import weave as _weave  # type: ignore
 
+        weave = _weave
         _weave_project = os.environ.get("WEAVE_PROJECT", "openclaw-sandbox")
         weave.init(_weave_project)
         WEAVE_ENABLED = True
         log(f"[weave] tracing enabled -> project '{_weave_project}'")
-    except Exception as e:  # pragma: no cover - best-effort observability
-        log(f"[weave] disabled (init failed: {e!r}). "
-            "Install with `pip install weave` / rebuild the snapshot to trace.")
+    except Exception as e:  # pragma: no cover
+        log(f"[weave] disabled (init failed: {e!r})")
 else:
     log("[weave] disabled (set WANDB_API_KEY to enable tracing)")
 
+# InferenceClient after weave.init so calls are auto-traced.
+from huggingface_hub import InferenceClient  # noqa: E402
 
-def maybe_op(name: Optional[str] = None):
-    """Decorate with `weave.op` only when tracing is enabled; otherwise return
-    the function untouched so the server has zero overhead/deps without W&B."""
-    def deco(fn):
-        if not WEAVE_ENABLED:
-            return fn
-        return weave.op(name=name)(fn) if name else weave.op()(fn)
-    return deco
-
-
-MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-1.5B-Instruct")
-DTYPE = os.environ.get("DTYPE", "bfloat16")
-NUM_THREADS = int(os.environ.get("NUM_THREADS", str(os.cpu_count() or 4)))
-DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "1024"))
-
-torch.set_num_threads(NUM_THREADS)
-_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}.get(DTYPE, torch.bfloat16)
-
-print(f"[server] loading {MODEL_ID} (dtype={DTYPE}, threads={NUM_THREADS}) ...", flush=True)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=_dtype,
-    low_cpu_mem_usage=True,
+_hf_token = (
+    os.environ.get("HF_TOKEN")
+    or os.environ.get("HUGGINGFACE_TOKEN")
+    or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 )
-model.eval()
-print("[server] model ready", flush=True)
+_provider = os.environ.get("HF_MODEL_PROVIDER", "featherless-ai")
+MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-1.5B-Instruct")
+DEFAULT_MAX_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "512"))
+
+if not _hf_token:
+    log("[server] ERROR: set HF_TOKEN (Hugging Face token with Inference Providers access)")
+    sys.exit(1)
+
+hf_client = InferenceClient(provider=_provider, token=_hf_token)
+log(f"[server] InferenceClient ready (provider={_provider}, model={MODEL_ID})")
 
 app = FastAPI()
 
@@ -81,9 +67,10 @@ app = FastAPI()
 async def _unhandled(request: Request, exc: Exception):
     tb = traceback.format_exc()
     log("[error]", tb)
-    return JSONResponse(status_code=500, content={"error": {"message": str(exc), "type": type(exc).__name__, "traceback": tb}})
-
-TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"message": str(exc), "type": type(exc).__name__, "traceback": tb}},
+    )
 
 
 class ChatRequest(BaseModel):
@@ -97,145 +84,125 @@ class ChatRequest(BaseModel):
     stream: Optional[bool] = False
 
 
-def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Flatten OpenAI-style structured content (list of {type,text}) into the
-    plain strings Qwen's chat template expects."""
-    out = []
-    for m in messages:
-        m = dict(m)
-        c = m.get("content")
-        if isinstance(c, list):
-            parts = []
-            for block in c:
-                if isinstance(block, dict):
-                    parts.append(block.get("text") or block.get("content") or "")
-                else:
-                    parts.append(str(block))
-            m["content"] = "\n".join(p for p in parts if p)
-        elif c is None:
-            m["content"] = ""
-        out.append(m)
+def _completion_kwargs(req: ChatRequest) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "model": req.model or MODEL_ID,
+        "messages": req.messages,
+        "max_tokens": min(req.max_tokens or DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+    }
+    if req.temperature is not None:
+        kwargs["temperature"] = req.temperature
+    if req.top_p is not None:
+        kwargs["top_p"] = req.top_p
+    if req.tools:
+        kwargs["tools"] = req.tools
+    if req.tool_choice is not None:
+        kwargs["tool_choice"] = req.tool_choice
+    return kwargs
+
+
+def _tool_call_to_openai(tc: Any) -> dict[str, Any]:
+    fn = getattr(tc, "function", None) or tc.get("function", {})
+    name = getattr(fn, "name", None) or fn.get("name", "")
+    args = getattr(fn, "arguments", None) or fn.get("arguments", "{}")
+    if not isinstance(args, str):
+        args = json.dumps(args)
+    tc_id = getattr(tc, "id", None) or tc.get("id") or ("call_" + uuid.uuid4().hex[:24])
+    return {
+        "id": tc_id,
+        "type": "function",
+        "function": {"name": name, "arguments": args},
+    }
+
+
+def _message_to_openai(msg: Any) -> dict[str, Any]:
+    content = getattr(msg, "content", None)
+    tool_calls = getattr(msg, "tool_calls", None)
+    out: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls:
+        out["tool_calls"] = [_tool_call_to_openai(tc) for tc in tool_calls]
     return out
 
 
-def _build_inputs(req: ChatRequest):
-    kwargs: dict[str, Any] = {"tokenize": False, "add_generation_prompt": True}
-    if req.tools:
-        kwargs["tools"] = req.tools
-    messages = _normalize_messages(req.messages)
-    text = tokenizer.apply_chat_template(messages, **kwargs)
-    return tokenizer(text, return_tensors="pt")
+def _usage_to_openai(usage: Any) -> dict[str, int]:
+    if usage is None:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    pt = getattr(usage, "prompt_tokens", None) or usage.get("prompt_tokens", 0)
+    ct = getattr(usage, "completion_tokens", None) or usage.get("completion_tokens", 0)
+    tt = getattr(usage, "total_tokens", None) or usage.get("total_tokens", pt + ct)
+    return {"prompt_tokens": int(pt), "completion_tokens": int(ct), "total_tokens": int(tt)}
 
 
-def _gen_kwargs(req: ChatRequest, inputs) -> dict[str, Any]:
-    # Hard-cap output so a slow CPU turn stays within OpenClaw's timeout.
-    max_new = min(req.max_tokens or DEFAULT_MAX_NEW_TOKENS, DEFAULT_MAX_NEW_TOKENS)
-    temp = req.temperature if req.temperature is not None else 0.7
-    do_sample = temp > 0
-    g: dict[str, Any] = {
-        **inputs,
-        "max_new_tokens": max_new,
-        "do_sample": do_sample,
-        "pad_token_id": tokenizer.pad_token_id or tokenizer.eos_token_id,
-    }
-    if do_sample:
-        g["temperature"] = temp
-        g["top_p"] = req.top_p if req.top_p is not None else 0.8
-    return g
+# weave.Model captures model config and versions each change (HF integration guide).
+if WEAVE_ENABLED and weave is not None:
 
+    class ChatModel(weave.Model):
+        model_id: str = MODEL_ID
+        provider: str = _provider
+        default_max_tokens: int = DEFAULT_MAX_TOKENS
 
-def _parse_tool_calls(text: str):
-    calls = []
-    for m in TOOL_CALL_RE.finditer(text):
-        try:
-            obj = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            continue
-        args = obj.get("arguments", {})
-        calls.append({
-            "id": "call_" + uuid.uuid4().hex[:24],
-            "type": "function",
-            "function": {
-                "name": obj.get("name", ""),
-                "arguments": json.dumps(args) if not isinstance(args, str) else args,
-            },
-        })
-    content = TOOL_CALL_RE.sub("", text).strip()
-    return content, calls
+        @weave.op()
+        def complete(self, messages: list, tools: list | None, params: dict) -> dict[str, Any]:
+            kwargs = {"messages": messages, **params}
+            if tools:
+                kwargs["tools"] = tools
+            response = hf_client.chat_completion(**kwargs)
+            choice = response.choices[0]
+            msg = _message_to_openai(choice.message)
+            finish = getattr(choice, "finish_reason", None) or "stop"
+            return {
+                "message": msg,
+                "finish_reason": finish,
+                "usage": _usage_to_openai(getattr(response, "usage", None)),
+            }
+
+    _chat_model = ChatModel()
+
+    def _complete(req: ChatRequest) -> dict[str, Any]:
+        return _chat_model.complete(req.messages, req.tools, _completion_kwargs(req))
+
+else:
+
+    def _complete(req: ChatRequest) -> dict[str, Any]:
+        response = hf_client.chat_completion(**_completion_kwargs(req))
+        choice = response.choices[0]
+        msg = _message_to_openai(choice.message)
+        finish = getattr(choice, "finish_reason", None) or "stop"
+        return {
+            "message": msg,
+            "finish_reason": finish,
+            "usage": _usage_to_openai(getattr(response, "usage", None)),
+        }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_ID}
+    return {"status": "ok", "model": MODEL_ID, "provider": _provider}
 
 
 @app.get("/v1/models")
 def list_models():
     return {
         "object": "list",
-        "data": [{"id": MODEL_ID, "object": "model", "created": int(time.time()), "owned_by": "local"}],
-    }
-
-
-@maybe_op(name="qwen_chat_completion")
-def _complete(req: ChatRequest, inputs, prompt_tokens: int) -> dict[str, Any]:
-    """Run a non-streaming generation. Wrapped in a Weave op so each turn shows
-    up as a trace with its inputs (messages/tools/params) and outputs
-    (content/tool_calls/usage)."""
-    with torch.no_grad():
-        out = model.generate(**_gen_kwargs(req, inputs))
-    gen = out[0][prompt_tokens:]
-    text = tokenizer.decode(gen, skip_special_tokens=True)
-    content, tool_calls = _parse_tool_calls(text)
-    completion_tokens = int(gen.shape[-1])
-    return {
-        "content": content,
-        "tool_calls": tool_calls,
-        "finish_reason": "tool_calls" if tool_calls else "stop",
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
-    }
-
-
-@maybe_op(name="qwen_chat_completion_stream")
-def _record_stream(req: ChatRequest, content: Optional[str], tool_calls: list, usage: dict) -> dict[str, Any]:
-    """Record the assembled result of a streamed turn so it appears in Weave
-    alongside non-streamed turns (the op's return value is what gets logged)."""
-    return {
-        "content": content,
-        "tool_calls": tool_calls,
-        "finish_reason": "tool_calls" if tool_calls else "stop",
-        "usage": usage,
+        "data": [{"id": MODEL_ID, "object": "model", "created": int(time.time()), "owned_by": _provider}],
     }
 
 
 @app.post("/v1/chat/completions")
 def chat_completions(req: ChatRequest):
-    inputs = _build_inputs(req)
-    prompt_tokens = int(inputs["input_ids"].shape[-1])
     cmpl_id = "chatcmpl-" + uuid.uuid4().hex
     created = int(time.time())
 
     if req.stream:
-        return StreamingResponse(_stream(req, inputs, cmpl_id, created, prompt_tokens), media_type="text/event-stream")
+        return StreamingResponse(_stream(req, cmpl_id, created), media_type="text/event-stream")
 
-    result = _complete(req, inputs, prompt_tokens)
-    content = result["content"]
-    tool_calls = result["tool_calls"]
-
-    message: dict[str, Any] = {"role": "assistant", "content": content or None}
-    if tool_calls:
-        message["tool_calls"] = tool_calls
-
+    result = _complete(req)
     return JSONResponse({
         "id": cmpl_id,
         "object": "chat.completion",
         "created": created,
-        "model": MODEL_ID,
-        "choices": [{"index": 0, "message": message, "finish_reason": result["finish_reason"]}],
+        "model": req.model or MODEL_ID,
+        "choices": [{"index": 0, "message": result["message"], "finish_reason": result["finish_reason"]}],
         "usage": result["usage"],
     })
 
@@ -244,53 +211,47 @@ def _sse(obj: dict[str, Any]) -> str:
     return f"data: {json.dumps(obj)}\n\n"
 
 
-def _usage(prompt_tokens: int, full: str) -> dict[str, int]:
-    completion_tokens = len(tokenizer(full, add_special_tokens=False)["input_ids"])
-    return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-    }
-
-
-def _stream(req: ChatRequest, inputs, cmpl_id: str, created: int, prompt_tokens: int):
-    """Stream plain text token-by-token; if tool calls are detected, buffer the
-    whole output and emit tool_calls in the final delta instead of content."""
-    base = {"id": cmpl_id, "object": "chat.completion.chunk", "created": created, "model": MODEL_ID}
-
+def _stream(req: ChatRequest, cmpl_id: str, created: int):
+    base = {"id": cmpl_id, "object": "chat.completion.chunk", "created": created, "model": req.model or MODEL_ID}
     yield _sse({**base, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
 
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-    gk = _gen_kwargs(req, inputs)
-    gk["streamer"] = streamer
-    thread = Thread(target=lambda: model.generate(**gk))
-    thread.start()
+    kwargs = _completion_kwargs(req)
+    kwargs["stream"] = True
+    finish_reason = "stop"
 
-    full = ""
-    saw_tool = False
-    for piece in streamer:
-        full += piece
-        if "<tool_call>" in full:
-            saw_tool = True
-            continue  # hold back; emit tool_calls at the end
-        if not saw_tool and piece:
-            yield _sse({**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]})
-    thread.join()
+    try:
+        for chunk in hf_client.chat_completion(**kwargs):
+            for choice in chunk.choices:
+                delta = choice.delta
+                content = getattr(delta, "content", None)
+                tool_calls = getattr(delta, "tool_calls", None)
+                fr = getattr(choice, "finish_reason", None)
+                if fr:
+                    finish_reason = fr
 
-    if saw_tool:
-        content, tool_calls = _parse_tool_calls(full)
-        if tool_calls:
-            _record_stream(req, content or None, tool_calls, _usage(prompt_tokens, full))
-            deltas = []
-            for i, tc in enumerate(tool_calls):
-                deltas.append({"index": i, "id": tc["id"], "type": "function", "function": tc["function"]})
-            yield _sse({**base, "choices": [{"index": 0, "delta": {"tool_calls": deltas}, "finish_reason": None}]})
-            yield _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
-            yield "data: [DONE]\n\n"
-            return
+                delta_out: dict[str, Any] = {}
+                if content:
+                    delta_out["content"] = content
+                if tool_calls:
+                    delta_out["tool_calls"] = [
+                        {
+                            "index": getattr(tc, "index", i),
+                            "id": getattr(tc, "id", None),
+                            "type": getattr(tc, "type", "function"),
+                            "function": {
+                                "name": getattr(getattr(tc, "function", None), "name", ""),
+                                "arguments": getattr(getattr(tc, "function", None), "arguments", ""),
+                            },
+                        }
+                        for i, tc in enumerate(tool_calls)
+                    ]
+                if delta_out:
+                    yield _sse({**base, "choices": [{"index": 0, "delta": delta_out, "finish_reason": None}]})
+    except Exception as e:
+        log("[stream error]", e)
+        raise
 
-    _record_stream(req, full, [], _usage(prompt_tokens, full))
-    yield _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+    yield _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]})
     yield "data: [DONE]\n\n"
 
 

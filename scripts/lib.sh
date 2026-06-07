@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Shared helpers: locate the daytona binary and load .env.
+# Shared helpers: load .env and defaults for local Docker workflows.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Prefer a system daytona, fall back to the locally-downloaded one.
+# Daytona CLI is optional (legacy scripts only).
 if command -v daytona >/dev/null 2>&1; then
   DAYTONA="$(command -v daytona)"
 elif [[ -x "$ROOT_DIR/.bin/daytona" ]]; then
   DAYTONA="$ROOT_DIR/.bin/daytona"
-else
-  echo "error: daytona CLI not found (looked on PATH and in .bin/)" >&2
-  exit 1
 fi
 export DAYTONA
 
@@ -31,10 +28,16 @@ require() {
 }
 
 # Defaults (overridable via .env)
+: "${LOCAL_IMAGE:=openclaw-local}"
+: "${LOCAL_CONTAINER:=openclaw-local}"
+: "${OPENCLAW_PORT:=18789}"
+: "${MODEL_ID:=Qwen/Qwen2.5-1.5B-Instruct}"
+: "${MODEL_PORT:=8000}"
+: "${HF_MODEL_PROVIDER:=featherless-ai}"
+: "${WEAVE_PROJECT:=openclaw-sandbox}"
 : "${DAYTONA_TARGET:=us}"
 : "${OPENCLAW_CPU:=4}"
 : "${OPENCLAW_MEMORY_GB:=8}"
 : "${OPENCLAW_DISK_GB:=10}"
 : "${SNAPSHOT_NAME:=openclaw-max}"
 : "${SANDBOX_NAME:=openclaw}"
-: "${OPENCLAW_PORT:=18789}"
