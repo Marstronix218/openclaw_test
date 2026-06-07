@@ -5,10 +5,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 mode="${1:-}"
 case "$mode" in
   allow)
-    openclaw_exec "openclaw config set tools.deny '[]' --strict-json"
+    openclaw_exec "openclaw config set tools.deny '[\"process\",\"apply_patch\"]' --strict-json"
     ;;
   deny)
-    openclaw_exec "openclaw config set tools.deny '[\"web_search\",\"web_fetch\"]' --strict-json"
+    openclaw_exec "openclaw config set tools.deny '[\"process\",\"apply_patch\",\"web_search\",\"web_fetch\"]' --strict-json"
     ;;
   *)
     echo "usage: $0 allow|deny" >&2

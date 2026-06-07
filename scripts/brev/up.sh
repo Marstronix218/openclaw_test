@@ -134,10 +134,11 @@ openclaw_exec "openclaw config set agents.defaults.model.primary 'brevvllm/$MODE
 openclaw_exec "openclaw config set agents.defaults.timeoutSeconds 1200 --strict-json"
 openclaw_exec "openclaw config set tools.profile minimal"
 # Restrictive profiles are no longer widened by configuring tools.exec/tools.fs.
-# Grant the capabilities explicitly, then keep the benchmark surface at six tools.
+# Grant the capabilities explicitly. An additional tools.allow would intersect
+# with this profile policy and can leave the embedded agent with no tools.
 openclaw_exec "openclaw config set tools.alsoAllow '[\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\",\"process\"]' --strict-json"
-openclaw_exec "openclaw config set tools.allow '[\"session_status\",\"web_search\",\"web_fetch\",\"read\",\"write\",\"exec\"]' --strict-json"
-openclaw_exec "openclaw config set tools.deny '[]' --strict-json"
+openclaw_exec "openclaw config unset tools.allow"
+openclaw_exec "openclaw config set tools.deny '[\"process\",\"apply_patch\"]' --strict-json"
 openclaw_exec "openclaw config set skills.allowBundled '[\"weather\"]' --strict-json"
 openclaw_exec "openclaw config set gateway.controlUi.allowedOrigins '[\"http://localhost:${OPENCLAW_PORT}\",\"http://127.0.0.1:${OPENCLAW_PORT}\"]' --strict-json"
 

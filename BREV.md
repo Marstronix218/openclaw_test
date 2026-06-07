@@ -70,10 +70,17 @@ The configured tool surface has six tools:
 session_status, web_search, web_fetch, read, write, exec
 ```
 
-The setup uses `tools.profile=minimal`, widens it with `tools.alsoAllow`, then
-uses `tools.allow` to keep the final callable set to those six tools. This is
-required by current OpenClaw releases; configuring `tools.exec` alone no
-longer widens a restrictive profile.
+The setup uses `tools.profile=minimal` and widens it with `tools.alsoAllow`.
+It intentionally leaves `tools.allow` unset because that additional policy is
+intersected with the profile policy and can remove every callable tool. The
+`process` and `apply_patch` helpers are explicitly denied to keep the final
+surface at the six tools above.
+
+Repair an existing persisted configuration without rebuilding the containers:
+
+```bash
+bash scripts/brev/repair-tools.sh
+```
 
 `BRAVE_API_KEY` is optional but required for OpenClaw `web_search`.
 The bundled `weather` skill is the only bundled skill enabled.
