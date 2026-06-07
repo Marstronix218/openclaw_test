@@ -33,6 +33,11 @@ bash scripts/brev/status.sh
 The first run downloads the 7B model and takes longer. Later runs reuse the
 host cache.
 
+The default vLLM context window is 32,768 tokens. OpenClaw reserves 20,000 of
+those tokens for compaction recovery. Both values can be changed in
+`.env.brev`, but the context window must remain larger than the compaction
+reserve.
+
 ## Weave tracing
 
 The OpenClaw model provider points to a proxy on `127.0.0.1:8001`. That proxy

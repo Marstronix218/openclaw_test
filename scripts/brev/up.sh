@@ -129,6 +129,7 @@ openclaw_exec "openclaw config set models.pricing.enabled false --strict-json"
 openclaw_exec "openclaw config set models.providers.brevvllm '$provider_json' --strict-json"
 openclaw_exec "openclaw config set agents.defaults.model.primary 'brevvllm/$MODEL_ID'"
 openclaw_exec "openclaw config set agents.defaults.timeoutSeconds 1200 --strict-json"
+openclaw_exec "openclaw config set agents.defaults.compaction.reserveTokensFloor '$BREV_COMPACTION_RESERVE_TOKENS_FLOOR' --strict-json"
 openclaw_exec "openclaw config unset tools || true"
 openclaw_exec "openclaw config unset skills.allowBundled || true"
 openclaw_exec "rm -f /root/.openclaw/exec-approvals.json"
@@ -156,6 +157,7 @@ vllm_image=$BREV_VLLM_IMAGE
 vllm_dtype=$VLLM_DTYPE
 vllm_gpu_memory_utilization=$VLLM_GPU_MEMORY_UTILIZATION
 vllm_max_model_len=$VLLM_MAX_MODEL_LEN
+compaction_reserve_tokens_floor=$BREV_COMPACTION_RESERVE_TOKENS_FLOOR
 openclaw_version=$actual_openclaw_version
 EOF
 
