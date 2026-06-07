@@ -47,7 +47,12 @@ fi
 "
 
 # --- 4. Start the (Weave-traced) model server -------------------------------
-echo "==> Starting the Qwen model server (Weave tracing: ${WANDB_API_KEY:+ENABLED}${WANDB_API_KEY:-disabled — set WANDB_API_KEY in .env})"
+if [[ -n "${WANDB_API_KEY:-}" ]]; then
+  weave_status="ENABLED (project: ${WEAVE_PROJECT})"
+else
+  weave_status="disabled — set WANDB_API_KEY in .env"
+fi
+echo "==> Starting the Qwen model server (Weave tracing: ${weave_status})"
 dexec "
 set -e
 export HOME=/root; unset OPENCLAW_HOME
