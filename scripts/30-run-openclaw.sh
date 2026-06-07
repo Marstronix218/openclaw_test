@@ -27,7 +27,7 @@ if [ ! -f "\$OPENCLAW_HOME/openclaw.json" ]; then
 fi
 
 # (Re)start the gateway detached so it outlives this exec session.
-pkill -f "openclaw gateway" 2>/dev/null || true
+pkill -f '[o]penclaw gateway --bind' 2>/dev/null || true
 sleep 1
 setsid bash -c 'openclaw gateway --bind lan --port ${OPENCLAW_PORT} --force >> /root/.openclaw/gateway.log 2>&1' < /dev/null &
 sleep 5

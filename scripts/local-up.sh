@@ -1,33 +1,20 @@
 #!/usr/bin/env bash
-# Run the whole stack (OpenClaw gateway + local Qwen model server + Weave
-# tracing) in a LOCAL Docker container instead of a Daytona sandbox.
-#
-# Why: Daytona shared regions (Tier 1/2) enforce an infra-level egress allow
-# list that does NOT include Weights & Biases, so the in-sandbox server cannot
-# reach api/trace.wandb.ai and Weave tracing is impossible there. A local
-# container has normal outbound internet, so Weave works out of the box.
-#
-# This mirrors scripts 30/40/50 but targets `docker exec` instead of
-# `daytona exec`. Same image (snapshot/Dockerfile), same in-container steps.
+# Run OpenClaw + local Qwen model server (+ optional Weave tracing) in Docker.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require OPENCLAW_GATEWAY_TOKEN
 
 IMAGE="${LOCAL_IMAGE:-openclaw-local}"
 CONTAINER="${LOCAL_CONTAINER:-openclaw-local}"
-: "${MODEL_ID:=Qwen/Qwen2.5-1.5B-Instruct}"
-: "${MODEL_PORT:=8000}"
-: "${MODEL_DTYPE:=bfloat16}"
-: "${WEAVE_PROJECT:=openclaw-sandbox}"
 HOST_PORT="${OPENCLAW_PORT:-18789}"
 
 dexec() { docker exec "$CONTAINER" bash -lc "$1"; }
 
-# --- 1. Build the image (same Dockerfile used for the Daytona snapshot) ----
+# --- 1. Build the image (torch + model weights baked in) --------------------
 echo "==> Building image '$IMAGE' (first build downloads torch + model weights; can take a while)"
 docker build -t "$IMAGE" -f "$ROOT_DIR/snapshot/Dockerfile" "$ROOT_DIR/snapshot"
 
-# --- 2. (Re)create the container with full outbound networking ------------
+# --- 2. (Re)create the container --------------------------------------------
 echo "==> (Re)creating container '$CONTAINER'"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 run_env=(
@@ -41,16 +28,15 @@ run_env=(
 
 docker run -d --name "$CONTAINER" -p "${HOST_PORT}:18789" "${run_env[@]}" "$IMAGE"
 
-# Ship the latest model server (not baked into the image; same as 40-model-serve).
 dexec 'mkdir -p /root/model-server'
 docker cp "$ROOT_DIR/model-server/server.py" "$CONTAINER:/root/model-server/server.py"
 
-# --- 3. Onboard + start the gateway (mirrors 30-run-openclaw) -------------
+# --- 3. Onboard + start the gateway -----------------------------------------
 echo "==> Onboarding + starting the OpenClaw gateway"
 dexec "
 set -e
 export HOME=/root; unset OPENCLAW_HOME
-mkdir -p /root/.openclaw/workspace
+mkdir -p /root/.openclaw/workspace /root/model-server
 if [ ! -f /root/.openclaw/openclaw.json ]; then
   openclaw onboard --non-interactive --accept-risk --mode local --flow manual \
     --auth-choice skip \
@@ -60,8 +46,8 @@ if [ ! -f /root/.openclaw/openclaw.json ]; then
 fi
 "
 
-# --- 4. Start the (Weave-traced) model server (mirrors 40-model-serve) ----
-echo "==> Starting the Qwen model server (Weave tracing: ${WANDB_API_KEY:+ENABLED}${WANDB_API_KEY:-disabled})"
+# --- 4. Start the (Weave-traced) model server -------------------------------
+echo "==> Starting the Qwen model server (Weave tracing: ${WANDB_API_KEY:+ENABLED}${WANDB_API_KEY:-disabled — set WANDB_API_KEY in .env})"
 dexec "
 set -e
 export HOME=/root; unset OPENCLAW_HOME
@@ -70,19 +56,19 @@ pkill -f 'model-server/server.py' 2>/dev/null || true
 sleep 1
 cd /root/model-server
 PYTHONUNBUFFERED=1 MODEL_ID='$MODEL_ID' PORT='$MODEL_PORT' DTYPE='$MODEL_DTYPE' \
-  MAX_NEW_TOKENS='${MODEL_MAX_NEW_TOKENS:-512}' \
+  NUM_THREADS='${OPENCLAW_CPU:-4}' MAX_NEW_TOKENS='${MODEL_MAX_NEW_TOKENS:-512}' \
   WANDB_API_KEY='${WANDB_API_KEY:-}' WEAVE_PROJECT='${WEAVE_PROJECT}' \
   setsid bash -c 'python3 /root/model-server/server.py >> /root/model-server/server.log 2>&1' < /dev/null &
 "
 
-echo "==> Waiting for the model to load (CPU load can take a few minutes)..."
+echo "==> Waiting for the model to load (can take a few minutes on CPU)..."
 for i in $(seq 1 60); do
   code=$(dexec "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${MODEL_PORT}/health" 2>/dev/null | tr -dc '0-9')
   if [ "$code" = "200" ]; then echo "    model server UP"; break; fi
   sleep 10
 done
 
-# --- 5. Wire OpenClaw to the local model + restart gateway (mirrors 50) ---
+# --- 5. Wire OpenClaw to the local model + restart gateway ------------------
 echo "==> Wiring OpenClaw to the local model"
 dexec "
 set -e
@@ -106,6 +92,7 @@ sleep 5
 
 echo
 echo "Done. OpenClaw gateway: http://localhost:${HOST_PORT}  (token: \$OPENCLAW_GATEWAY_TOKEN)"
-echo "Verify a turn:  docker exec ${CONTAINER} bash -lc 'export HOME=/root; openclaw agent --message \"hello\"'"
-echo "Model log:      docker exec ${CONTAINER} bash -lc 'tail -f /root/model-server/server.log'"
-echo "Tear down:      bash scripts/local-down.sh"
+echo "Local model:           $MODEL_ID  (port ${MODEL_PORT} inside container)"
+echo "Weave project:         ${WEAVE_PROJECT}  (tracing: ${WANDB_API_KEY:+on}${WANDB_API_KEY:-off})"
+echo "Verify a turn:         bash scripts/verify-model.sh"
+echo "Tear down:             bash scripts/down.sh"

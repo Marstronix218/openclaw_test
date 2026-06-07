@@ -1,80 +1,45 @@
-# OpenClaw in Docker (local)
+# OpenClaw in Docker (local Qwen + Weave tracing)
 
-Runs the [OpenClaw](https://openclaw.ai) gateway and a local
-[Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) model
-server **entirely inside a Docker container** on your machine. Nothing runs on
-Daytona — the container has normal outbound internet, so **Weave (W&B) tracing
-works out of the box**.
+Runs the [OpenClaw](https://openclaw.ai) gateway in Docker with a local
+[Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct)
+model server. Every LLM call is traced via
+[Weave](https://wandb.ai/site/weave) when `WANDB_API_KEY` is set.
+
+Designed for cloud VMs (e.g. NVIDIA Brev) with Docker — no Daytona or HF
+Inference Providers required.
 
 ## Prerequisites
 
 - Docker
-- An LLM is bundled (Qwen 1.5B on CPU); no cloud API key required for inference
-- Optional: `WANDB_API_KEY` for Weave tracing
+- Outbound HTTPS (model download at build time; Weave traces at runtime)
+- `WANDB_API_KEY` for tracing (optional but recommended)
 
 ## Setup
 
 ```bash
 cp .env.example .env
 # Fill in OPENCLAW_GATEWAY_TOKEN (openssl rand -hex 32)
-# Optional: WANDB_API_KEY from https://wandb.ai/authorize
+# Fill in WANDB_API_KEY (https://wandb.ai/settings)
 
 bash scripts/up.sh
 ```
 
 `up.sh` runs `local-up.sh`, which:
 
-1. Builds the image from `snapshot/Dockerfile` (Node 24, OpenClaw, CPU torch,
-   transformers, Qwen weights).
+1. Builds an image from `snapshot/Dockerfile` (Node 24 + OpenClaw + CPU torch + Qwen weights).
 2. Starts container `openclaw-local` with port `18789` mapped to localhost.
-3. Onboards + starts the OpenClaw gateway.
-4. Starts the Qwen OpenAI-compatible model server on `:8000` (Weave-traced when
-   `WANDB_API_KEY` is set).
-5. Wires OpenClaw to the local model and restarts the gateway.
+3. Starts the Weave-traced Qwen model server on port `8000` inside the container.
+4. Onboards OpenClaw and wires it to the local model server.
+5. Starts the OpenClaw gateway.
 
-First build downloads torch + model weights and can take a while.
-
-## Tracing with Weave (Weights & Biases)
-
-Every LLM call OpenClaw makes goes through `model-server/server.py`, where
-Weave tracing is wired in. With `WANDB_API_KEY` set in `.env`, each turn's
-prompt, completion, tool calls, and token usage show up in your Weave project.
-
-```bash
-# In .env:
-WANDB_API_KEY=...                  # from https://wandb.ai/authorize
-WEAVE_PROJECT=openclaw-sandbox     # or "entity/project"
-```
-
-After `bash scripts/up.sh`, check the model server log for your Weave URL:
-
-```bash
-bash scripts/status.sh
-# or: docker exec openclaw-local grep "View Weave data at" /root/model-server/server.log
-```
-
-Run a test completion (shows up in Weave within a few seconds):
-
-```bash
-bash scripts/verify-model.sh
-```
-
-Tracing is opt-in: if `WANDB_API_KEY` is unset the server runs with zero
-overhead.
-
-> **Why not Daytona?** Shared Daytona regions block outbound traffic to
-> `api.wandb.ai` / `trace.wandb.ai`, so Weave cannot connect from inside a
-> sandbox. A local Docker container has unrestricted egress. Legacy Daytona
-> scripts (`20-sandbox.sh`, etc.) remain in `scripts/` if you need them for
-> other reasons, but `up.sh` / `down.sh` / `status.sh` / `ssh.sh` all target
-> Docker now.
+First build downloads torch and model weights — can take several minutes.
 
 ## Day-to-day
 
 ```bash
-bash scripts/status.sh       # container + gateway + model + Weave URL
+bash scripts/status.sh       # container + gateway + model + weave status
 bash scripts/ssh.sh          # interactive shell in the container
-bash scripts/verify-model.sh # test a model turn (and Weave trace)
+bash scripts/verify-model.sh # test a local completion (+ Weave trace)
 bash scripts/down.sh         # stop & remove the container (image kept)
 ```
 
@@ -87,9 +52,30 @@ openclaw agent --message "What can you do?" --thinking high
 
 Gateway UI: `http://localhost:18789` (gated by `OPENCLAW_GATEWAY_TOKEN`).
 
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENCLAW_GATEWAY_TOKEN` | — | Gateway auth token (required) |
+| `WANDB_API_KEY` | — | Weights & Biases API key (enables Weave tracing) |
+| `WEAVE_PROJECT` | `openclaw-sandbox` | Weave project name |
+| `MODEL_ID` | `Qwen/Qwen2.5-1.5B-Instruct` | Hugging Face model id |
+| `OPENCLAW_CPU` | `4` | torch thread count (match VM vCPUs) |
+| `LOCAL_IMAGE` | `openclaw-local` | Docker image name |
+| `LOCAL_CONTAINER` | `openclaw-local` | Docker container name |
+
+## NVIDIA Brev
+
+Use **VM Mode + setup script** (Docker is preinstalled). Skip Jupyter.
+
+1. Clone this repo on the instance.
+2. Create `.env` with `OPENCLAW_GATEWAY_TOKEN` and `WANDB_API_KEY`.
+3. Set `OPENCLAW_CPU` to match your instance vCPU count.
+4. Run `bash scripts/up.sh`.
+5. Expose port **18789** for the gateway.
+
 ## Notes
 
-- The model runs on CPU inside the container. A full agent turn can take 1–2
-  minutes; timeouts are raised to 1200s to accommodate this.
-- CPU torch + model weights are baked into the image at build time.
+- Weave traces appear in your W&B project after the first model call.
 - Secrets live only in `.env` (gitignored) and as container env vars.
+- Legacy Daytona scripts remain in `scripts/` but are unused.

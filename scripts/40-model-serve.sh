@@ -34,7 +34,8 @@ if [ -n "${WANDB_API_KEY:-}" ] && ! python3 -c "import weave" 2>/dev/null; then
 fi
 
 # (Re)start the server detached.
-pkill -f "model-server/server.py" 2>/dev/null || true
+# Anchor to the python process only; a bare path match kills this shell's cmdline.
+pkill -f '^python3 /root/model-server/server.py' 2>/dev/null || true
 sleep 1
 cd /root/model-server
 # nproc reports host CPUs inside a Daytona sandbox; pin threads to the real
