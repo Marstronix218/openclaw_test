@@ -2,7 +2,8 @@
 
 For the separate Brev `hyperstack_A100_80G` comparison using a locally
 downloaded `Qwen/Qwen2.5-7B-Instruct` model, see [BREV.md](BREV.md). That path
-uses vLLM on the Brev GPU and does not use Hugging Face Inference Providers.
+uses vLLM on the Brev GPU, traces through an OpenAI-compatible Weave proxy,
+and does not use Hugging Face Inference Providers.
 
 Runs the [OpenClaw](https://openclaw.ai) gateway in Docker with a local
 OpenAI-compatible proxy backed by

@@ -20,6 +20,8 @@ fi
 : "${BREV_DATA_DIR:=$BREV_ROOT_DIR/.brev-data}"
 : "${OPENCLAW_PORT:=18789}"
 : "${VLLM_HOST_PORT:=8000}"
+: "${WEAVE_PROXY_PORT:=8001}"
+: "${WEAVE_PROJECT:=openclaw-qwen25-7b}"
 : "${GPU_DEVICE:=0}"
 : "${VLLM_DTYPE:=bfloat16}"
 : "${VLLM_GPU_MEMORY_UTILIZATION:=0.85}"

@@ -66,6 +66,7 @@ printf '%s\n' "$exit_code" > "$run_dir/exit-code.txt"
 nvidia-smi --query-gpu=timestamp,name,memory.used,utilization.gpu \
   --format=csv,noheader > "$run_dir/gpu-after.txt"
 docker logs --since 30m "$BREV_VLLM_CONTAINER" > "$run_dir/vllm.log" 2>&1 || true
+openclaw_exec "tail -n 1000 /root/.openclaw/weave-proxy.log" > "$run_dir/weave-proxy.log" 2>&1 || true
 openclaw_exec "tail -n 1000 /root/.openclaw/gateway.log" > "$run_dir/gateway.log" 2>&1 || true
 
 echo

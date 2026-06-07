@@ -3,12 +3,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 prompt="${1:-In one short sentence, identify the model serving this response.}"
 
-echo "=== direct vLLM completion ==="
+echo "=== traced Qwen completion (Weave proxy -> vLLM) ==="
 payload="$(printf '%s' "$prompt" | docker exec -i "$BREV_OPENCLAW_CONTAINER" jq -Rs \
   --arg model "$MODEL_ID" \
   '{model:$model,messages:[{role:"user",content:.}],temperature:0,max_tokens:64}')"
 docker exec "$BREV_OPENCLAW_CONTAINER" curl -fsS --max-time 600 \
-  "http://${BREV_VLLM_CONTAINER}:8000/v1/chat/completions" \
+  "http://127.0.0.1:${WEAVE_PROXY_PORT}/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d "$payload" | docker exec -i "$BREV_OPENCLAW_CONTAINER" jq -r \
   '.choices[0].message.content, ("tokens=" + (.usage.total_tokens | tostring))'

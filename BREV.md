@@ -9,6 +9,7 @@ This path is for the separate comparison box:
 | GPU | 1x NVIDIA A100 80GB |
 | Model | `Qwen/Qwen2.5-7B-Instruct` |
 | Serving | Local vLLM, no Hugging Face Inference Provider |
+| Tracing | W&B Weave through a local OpenAI-compatible proxy |
 
 The vLLM container downloads the model into `.brev-data/huggingface` on the
 Brev host. Recreating the containers reuses those local weights.
@@ -21,6 +22,7 @@ On the Brev instance:
 git switch feat/brev-qwen25-7b
 cp .env.brev.example .env.brev
 # Set OPENCLAW_GATEWAY_TOKEN. HF_TOKEN is optional for this public model.
+# Set WANDB_API_KEY to send Qwen traces to WEAVE_PROJECT.
 
 bash scripts/brev/up.sh
 bash scripts/brev/verify.sh
@@ -29,6 +31,27 @@ bash scripts/brev/status.sh
 
 The first run downloads the 7B model and takes longer. Later runs reuse the
 host cache.
+
+## Weave tracing
+
+The OpenClaw model provider points to a proxy on `127.0.0.1:8001`. That proxy
+uses the OpenAI SDK against the local vLLM server and initializes Weave before
+serving requests. Normal and streaming completions therefore include prompts,
+responses, tool calls, token usage, and latency in the configured project.
+
+```bash
+# In .env.brev:
+WANDB_API_KEY=...
+WEAVE_PROJECT=openclaw-qwen25-7b
+
+bash scripts/brev/up.sh
+bash scripts/brev/verify.sh
+bash scripts/brev/status.sh
+```
+
+Tracing is disabled when `WANDB_API_KEY` is blank; inference still flows
+through the same proxy. The proxy log is persisted at
+`.brev-data/openclaw/weave-proxy.log`.
 
 From your laptop, forward the private gateway port:
 

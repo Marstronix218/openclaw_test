@@ -11,6 +11,7 @@ cp "$BREV_DATA_DIR/run-metadata.txt" "$tmp_dir/" 2>/dev/null || true
 cp -R "$BREV_RUNS_DIR" "$tmp_dir/runs" 2>/dev/null || true
 nvidia-smi -q > "$tmp_dir/nvidia-smi.txt" 2>&1 || true
 docker logs "$BREV_VLLM_CONTAINER" > "$tmp_dir/vllm.log" 2>&1 || true
+openclaw_exec "tail -n 5000 /root/.openclaw/weave-proxy.log" > "$tmp_dir/openclaw/weave-proxy.log" 2>&1 || true
 openclaw_exec "tail -n 5000 /root/.openclaw/gateway.log" > "$tmp_dir/openclaw/gateway.log" 2>&1 || true
 openclaw_exec "openclaw doctor --deep" > "$tmp_dir/openclaw/doctor.txt" 2>&1 || true
 openclaw_exec "openclaw models status" > "$tmp_dir/openclaw/models.txt" 2>&1 || true

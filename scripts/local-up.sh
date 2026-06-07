@@ -54,8 +54,10 @@ fi
 
 if [[ -n "${WANDB_API_KEY:-}" ]]; then
   weave_status="ENABLED (project: ${WEAVE_PROJECT})"
+  weave_tracing=on
 else
   weave_status="disabled — set WANDB_API_KEY in .env"
+  weave_tracing=off
 fi
 echo "==> Starting HF InferenceClient proxy (Weave: ${weave_status}, provider: ${HF_MODEL_PROVIDER})"
 dexec "
@@ -108,6 +110,6 @@ sleep 5
 echo
 echo "Done. OpenClaw gateway: http://localhost:${HOST_PORT}  (token: \$OPENCLAW_GATEWAY_TOKEN)"
 echo "HF provider:             ${HF_MODEL_PROVIDER}  model: ${MODEL_ID}"
-echo "Weave project:         ${WEAVE_PROJECT}  (tracing: ${WANDB_API_KEY:+on}${WANDB_API_KEY:-off})"
+echo "Weave project:         ${WEAVE_PROJECT}  (tracing: ${weave_tracing})"
 echo "Verify a turn:         bash scripts/verify-model.sh"
 echo "Tear down:             bash scripts/down.sh"
